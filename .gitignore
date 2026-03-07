@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Local tooling
+.claude/
+
+#Internal Notes
+INTERNAL_NOTES.md
+
+# FAISS index (large binary, rebuild locally)
+faiss_index/
