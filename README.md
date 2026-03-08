@@ -1,6 +1,6 @@
 # Agentic RAG System
 
-End-to-end Retrieval-Augmented Generation pipeline built with LangGraph and Claude. The agent autonomously decides whether to search local documents, query the web, or answer from general knowledge — without any manual routing.
+End-to-end Retrieval-Augmented Generation pipeline built with LangGraph and Claude. The agent autonomously decides whether to search local documents, query the web, or answer from general knowledge — and validates every answer through a multi-agent jury before returning it.
 
 ---
 
@@ -14,7 +14,7 @@ Every question is classified into one of three paths:
 
 If local retrieval returns irrelevant chunks, the agent rewrites the query and retries. After exhausting local attempts it falls back to web search automatically.
 
-All answers include per-source citations — filenames for local docs, URLs for web results.
+Every answer then passes through a **3-juror deliberation + judge synthesis**, and an **escalation gate** that flags low-confidence or unsourced answers before they reach you.
 
 ---
 
@@ -25,7 +25,10 @@ All answers include per-source citations — filenames for local docs, URLs for 
 - Tavily web search fallback for questions outside the local document set
 - MMR retrieval for diverse, non-repetitive chunks
 - Persistent FAISS index — built once, reloaded on every run
-- Multi-turn conversation memory with cited answers across sessions
+- Multi-agent jury: 3 specialist jurors run in **parallel** + judge LLM produce a confidence-scored final answer
+- Escalation gate: flags low-confidence, uncited, or disputed answers
+- Every response shows source type and confidence level
+- Multi-turn conversation memory with per-source citation across sessions
 - Supports PDF, DOCX, PPTX, TXT, CSV, MD documents
 
 ---
@@ -40,6 +43,28 @@ All answers include per-source citations — filenames for local docs, URLs for 
 | Vector store | FAISS |
 | Web search | Tavily |
 | Document loaders | LangChain Community |
+
+---
+
+## Jury System
+
+After retrieval, instead of a single LLM call, three specialist jurors analyse the question **concurrently** using `ThreadPoolExecutor`:
+
+| Juror | Role |
+|---|---|
+| Citation Juror | Answers only from explicit source statements. Flags anything not directly in the context. |
+| Synthesis Juror | Connects the dots across retrieved chunks for the most complete answer. |
+| Gap Juror | Identifies what the context fails to answer. Surfaces missing information explicitly. |
+
+All three jurors fire simultaneously — only the **Judge LLM** waits for their results before synthesising a final answer and confidence score (0.0–1.0). This cuts jury latency roughly in half compared to sequential execution.
+
+The **Escalation Gate** checks for:
+- Confidence below 60%
+- No sources retrieved (general knowledge only)
+- Juror disagreement
+- Answer contains no citations despite having sources
+
+Flagged answers are returned with a visible warning so you know not to rely on them blindly.
 
 ---
 
@@ -71,22 +96,27 @@ The FAISS index builds automatically on first run and is reused on subsequent ru
 ## Usage
 
 ```python
-# Single question — routes to local docs, web, or general knowledge automatically
-answer = run_agent("What is the EU inflation rate in 2024?")
+answer = run_agent("What is the difference between logistic and linear regression?")
 print(answer)
-
-# Multi-turn conversation
-_chat_history.clear()
-print(run_agent("What does the document say about logistic regression?"))
-print(run_agent("How does that compare to linear regression?"))
 ```
 
-Watch the logs to see which path each question takes:
+Every response prints a metadata block before the answer:
+
 ```
-[decide] route=local
-[retrieve] got 4 chunks (attempt 1)
-[route_after_retrieve] → generate
-[generate] done.
+============================================================
+  Source     : Local Documents
+  Confidence : 87%
+============================================================
+```
+
+Or if flagged:
+
+```
+============================================================
+  Source     : Web Search
+  Confidence : 45%
+  FLAGGED    : low confidence (45%), juror disagreement
+============================================================
 ```
 
 ---
@@ -96,15 +126,17 @@ Watch the logs to see which path each question takes:
 ```
 decide (classifies question)
     |
-    |-- "local"   --> retrieve --> relevant? --> generate
-    |                    |                          |
-    |                    | no, retry               END
+    |-- "local"   --> retrieve --> relevant? --> jury_generate
+    |                    |                            |
+    |                    | no, retry            escalation_gate
+    |                    |                            |
+    |                 query (reformulate)            END
     |                    |
-    |                 query (reformulate) --> retrieve --> max attempts --> web_search
+    |                 retrieve --> max attempts --> web_search
     |
-    |-- "web"     --> web_search --> generate --> END
+    |-- "web"     --> web_search --> jury_generate --> escalation_gate --> END
     |
-    |-- "general" --> generate --> END
+    |-- "general" --> jury_generate --> escalation_gate --> END
 ```
 
 ---
