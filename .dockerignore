@@ -1,0 +1,12 @@
+.venv/
+.git/
+.env
+.claude/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb
+.ipynb_checkpoints/
+uv.lock
+pyproject.toml

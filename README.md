@@ -43,6 +43,9 @@ Every answer then passes through a **3-juror deliberation + judge synthesis**, a
 | Vector store | FAISS |
 | Web search | Tavily |
 | Document loaders | LangChain Community |
+| Web API | FastAPI |
+| Containerization | Docker |
+| Orchestration | Kubernetes (Minikube locally, EKS/GKE/AKS in cloud) |
 
 ---
 
@@ -138,6 +141,64 @@ decide (classifies question)
     |
     |-- "general" --> jury_generate --> escalation_gate --> END
 ```
+
+---
+
+## Kubernetes Deployment (Production)
+
+### Local Deployment (Minikube)
+
+**Prerequisites:** Docker, Minikube, kubectl installed
+
+**1. Start Minikube cluster**
+```bash
+minikube start
+kubectl get nodes
+```
+
+**2. Build Docker image**
+```bash
+docker build -t agentic-rag:latest .
+minikube image load agentic-rag:latest
+```
+
+**3. Create Kubernetes secret for API keys**
+```powershell
+$env_content = Get-Content ".env" -Raw
+$anthropic_key = ($env_content | Select-String "ANTHROPIC_API_KEY=(.+)").Matches.Groups[1].Value
+$tavily_key = ($env_content | Select-String "TAVILY_API_KEY=(.+)").Matches.Groups[1].Value
+
+kubectl create secret generic api-keys `
+  --from-literal=anthropic-key=$anthropic_key `
+  --from-literal=tavily-key=$tavily_key
+```
+
+**4. Deploy to Kubernetes**
+```bash
+kubectl apply -f deployment.yaml
+kubectl apply -f service.yaml
+```
+
+**5. Access the service**
+```bash
+minikube service agentic-rag --url
+curl http://127.0.0.1:PORT/query -X POST -H "Content-Type: application/json" -d '{"question":"Your question here"}'
+```
+
+### Cloud Deployment
+
+The same deployment manifests work on AWS EKS, Google GKE, or Azure AKS — only the image storage changes:
+
+1. Push image to cloud container registry (e.g., ECR, GCR, ACR)
+2. Update `deployment.yaml` with registry URL
+3. Apply same `kubectl apply` commands to your cloud cluster
+
+### Files
+
+- **`Dockerfile`** — Builds Docker image with Python 3.11, FastAPI, and all dependencies
+- **`main.py`** — FastAPI wrapper; loads agent and serves `/query` endpoint
+- **`deployment.yaml`** — Kubernetes deployment manifest; specifies replicas, image, and port
+- **`service.yaml`** — Kubernetes service manifest; exposes app via NodePort on port 30000
 
 ---
 
